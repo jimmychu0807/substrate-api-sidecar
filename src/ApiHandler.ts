@@ -23,7 +23,7 @@ import { u8aToHex } from '@polkadot/util';
 import { getSpecTypes } from '@polkadot/types-known';
 import { u32 } from '@polkadot/types/primitive';
 import { DispatchInfo } from '@polkadot/types/interfaces';
-import { calc_fee } from '@polkadot/calc-fee'
+import { CalcFee } from '@polkadot/calc-fee'
 
 interface SanitizedEvent {
 	method: string;
@@ -131,21 +131,58 @@ export default class ApiHandler {
 
 		const perByte = api.consts.transactionPayment.transactionByteFee;
 		const extrinsicBaseWeight = api.consts.system.extrinsicBaseWeight;
-		const coefficients = api.consts.transactionPayment.weightToFee;
 		const multiplier = await api.query.transactionPayment.nextFeeMultiplier.at(parentHash);
+		const version = await api.rpc.state.getRuntimeVersion(parentHash);
+		const specName = version.specName.toString();
+		const specVersion = version.specVersion.toNumber();
+		const fixed128Bug = specName === 'polkadot' && specVersion === 0;
+		const coefficients = function() {
+			if (specName === 'kusama' && specVersion === 1062) {
+				return [{
+					coeffInteger: "8",
+					coeffFrac: 0,
+					degree: 1,
+					negative: false,
+				}]
+			} else if (specName === 'polkadot' || (specName === 'kusama' && specVersion > 1062)) {
+				return api.consts.transactionPayment.weightToFee.map(function(c) { return {
+					coeffInteger: c.coeffInteger.toString(),
+					coeffFrac: c.coeffFrac,
+					degree: c.degree,
+					negative: c.negative,
+				}});
+			} else {
+				// fee calculation not supported for this runtime
+				return null;
+			}
+		}();
+		const calcFee = function() {
+			if (coefficients !== null) {
+				return CalcFee.from_params(
+					coefficients,
+					BigInt(extrinsicBaseWeight.toString()),
+					multiplier.toString(),
+					perByte.toString(),
+					fixed128Bug,
+				)
+			} else {
+				return null;
+			}
+		}();
 
 		for (let idx = 0; idx < block.extrinsics.length; ++idx) {
 			if (!extrinsics[idx].paysFee || !block.extrinsics[idx].isSigned) {
 				continue;
 			}
 
+			if (calcFee === null) {
+				extrinsics[idx].info = {
+					error: `Fee calculation not supported for ${specName}#${specVersion}`,
+				};
+				continue;
+			}
+
 			try {
-				if (api.runtimeVersion.specName.toString() === 'kusama') {
-					extrinsics[idx].info = await api.rpc.payment.queryInfo(block.extrinsics[idx].toHex(), parentHash);
-
-					continue;
-				}
-
 				const xtEvents = extrinsics[idx].events;
 				const completedEvent = xtEvents.find((event) => event.method === successEvent || event.method === failureEvent);
 				if (!completedEvent) {
@@ -179,19 +216,7 @@ export default class ApiHandler {
 				const len = block.extrinsics[idx].encodedLength;
 				const weight = weightInfo.weight;
 
-				const partialFee = calc_fee(
-					coefficients.map(function(c) { return {
-						coeffInteger: c.coeffInteger.toString(),
-						coeffFrac: c.coeffFrac,
-						degree: c.degree,
-						negative: c.negative,
-					}}),
-					BigInt(weight.toString()),
-					BigInt(extrinsicBaseWeight.toString()),
-					multiplier.toString(),
-					perByte.toString(),
-					len,
-				);
+				const partialFee = calcFee.calc_fee(BigInt(weight.toString()), len);
 
 				extrinsics[idx].info = api.createType('RuntimeDispatchInfo', {
 					weight,
@@ -317,10 +342,11 @@ export default class ApiHandler {
 	async fetchTxArtifacts(hash: BlockHash) {
 		const api = await this.ensureMeta(hash);
 
-		const [header, metadata, genesisHash, version] = await Promise.all([
+		const [header, metadata, genesisHash, name, version] = await Promise.all([
 			api.rpc.chain.getHeader(hash),
 			api.rpc.state.getMetadata(hash),
 			api.rpc.chain.getBlockHash(0),
+			api.rpc.system.chain(),
 			api.rpc.state.getRuntimeVersion(hash),
 		]);
 
@@ -332,6 +358,8 @@ export default class ApiHandler {
 		return {
 			at,
 			genesisHash,
+			chainName: name.toString(),
+			specName: version.specName.toString(),
 			specVersion: version.specVersion,
 			txVersion: version.transactionVersion,
 			metadata: metadata.toHex(),
@@ -357,6 +385,23 @@ export default class ApiHandler {
 			rewardDestination,
 			bonded,
 		};
+	}
+
+	async fetchFeeInformation(hash: BlockHash, extrinsic: string) {
+		const api = await this.ensureMeta(hash);
+
+		try {
+			return await api.rpc.payment.queryInfo(extrinsic, hash);
+		} catch (err) {
+			throw {
+				error: 'Unable to fetch fee info',
+				data: {
+					extrinsic,
+					block: hash
+				},
+				cause: err.toString(),
+			};
+		}
 	}
 
 	async submitTx(extrinsic: string) {
