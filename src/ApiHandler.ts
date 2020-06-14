@@ -19,7 +19,6 @@ import { CalcFee } from '@polkadot/calc-fee';
 import { Struct } from '@polkadot/types';
 import { getSpecTypes } from '@polkadot/types-known';
 import { GenericCall } from '@polkadot/types/generic';
-import { EventData } from '@polkadot/types/generic/Event';
 import { DispatchInfo } from '@polkadot/types/interfaces';
 import { BlockHash } from '@polkadot/types/interfaces/chain';
 import { EventRecord } from '@polkadot/types/interfaces/system';
@@ -28,23 +27,9 @@ import { Codec } from '@polkadot/types/types';
 import { u8aToHex } from '@polkadot/util';
 import { blake2AsU8a } from '@polkadot/util-crypto';
 
-interface SanitizedEvent {
-	method: string;
-	data: EventData;
-}
-
-interface SanitizedCall {
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	[key: string]: any;
-	method: string;
-	callIndex: Uint8Array | string;
-	args: {
-		call?: SanitizedCall;
-		calls?: SanitizedCall[];
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		[key: string]: any;
-	};
-}
+import { BlockResponse, NewArg, SanitizedExtrinsic } from './types';
+import { SanitizedCall } from './types/sanitized/Call';
+import { SanitizedEvent } from './types/sanitized/Event';
 
 export default class ApiHandler {
 	// private wsUrl: string,
@@ -60,7 +45,7 @@ export default class ApiHandler {
 	}
 
 	// eslint-disable-next-line @typescript-eslint/explicit-module-boundary-types
-	async fetchBlock(hash: BlockHash) {
+	async fetchBlock(hash: BlockHash): Promise<BlockResponse> {
 		const api = await this.ensureMeta(hash);
 		const [{ block }, events] = await Promise.all([
 			api.rpc.chain.getBlock(hash),
@@ -81,33 +66,35 @@ export default class ApiHandler {
 		});
 
 		const defaultSuccess = typeof events === 'string' ? events : false;
-		const extrinsics = block.extrinsics.map((extrinsic) => {
-			const {
-				method,
-				nonce,
-				signature,
-				signer,
-				isSigned,
-				tip,
-				args,
-			} = extrinsic;
-			const hash = u8aToHex(blake2AsU8a(extrinsic.toU8a(), 256));
+		const extrinsics = block.extrinsics.map(
+			(extrinsic): SanitizedExtrinsic => {
+				const {
+					method,
+					nonce,
+					signature,
+					signer,
+					isSigned,
+					tip,
+					args,
+				} = extrinsic;
+				const hash = u8aToHex(blake2AsU8a(extrinsic.toU8a(), 256));
 
-			return {
-				method: `${method.sectionName}.${method.methodName}`,
-				signature: isSigned ? { signature, signer } : null,
-				nonce,
-				args,
-				newArgs: this.parseGenericCall(method).args,
-				tip,
-				hash,
-				info: {},
-				events: [] as SanitizedEvent[],
-				success: defaultSuccess,
-				// paysFee overrides to bool if `system.ExtrinsicSuccess|ExtrinsicFailed` event is present
-				paysFee: null as null | boolean,
-			};
-		});
+				return {
+					method: `${method.sectionName}.${method.methodName}`,
+					signature: isSigned ? { signature, signer } : null,
+					nonce,
+					args,
+					newArgs: this.parseGenericCall(method).args,
+					tip,
+					hash,
+					info: undefined,
+					events: [] as SanitizedEvent[],
+					success: defaultSuccess,
+					// paysFee overrides to bool if `system.ExtrinsicSuccess|ExtrinsicFailed` event is present
+					paysFee: null as null | boolean,
+				};
+			}
+		);
 
 		const successEvent = 'system.ExtrinsicSuccess';
 		const failureEvent = 'system.ExtrinsicFailed';
@@ -638,7 +625,7 @@ export default class ApiHandler {
 
 	private parseGenericCall(genericCall: GenericCall): SanitizedCall {
 		const { sectionName, methodName, callIndex } = genericCall;
-		const newArgs = {};
+		const newArgs = {} as NewArg;
 
 		// Pull out the struct of arguments to this call
 		const callArgs = genericCall.get('args') as Struct;
