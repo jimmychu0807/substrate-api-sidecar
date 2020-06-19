@@ -348,21 +348,16 @@ export default class ApiHandler {
 	async fetchStakingInfo(hash: BlockHash): Promise<StakingInfo> {
 		const api = await this.ensureMeta(hash);
 
-		const header = await api.rpc.chain.getHeader(hash);
-
-		const at = {
-			hash: hash.toJSON(),
-			height: header.number.toNumber().toString(10),
-		};
-		console.log(at);
 
 		const [
+			header,
 			validatorCount,
 			activeEraOption,
 			forceEra,
 			queuedElected,
 			eraElectionStatus,
 		] = await Promise.all([
+			await api.rpc.chain.getHeader(hash),
 			await api.query.staking.validatorCount.at(hash),
 			await api.query.staking.activeEra.at(hash),
 			await api.query.staking.forceEra.at(hash),
@@ -370,13 +365,11 @@ export default class ApiHandler {
 			await api.query.staking.eraElectionStatus.at(hash),
 		]);
 
-		// await api.query.session.nextSessionRotation.at(hash), // in session, but not a storage item
-
 		const activeEraIndex = activeEraOption.unwrapOr(null)?.index;
 		if (activeEraIndex === null || activeEraIndex === undefined) {
 			throw {
 				statusCode: 404,
-				error: `There was an error while attempting to query for ActiveEra at BlockHash ${hash.toJSON()}`,
+				error: `There was an error while attempting to query for ActiveEra.index at BlockHash ${hash.toString()}`,
 			};
 		}
 
@@ -386,12 +379,16 @@ export default class ApiHandler {
 		);
 
 		return {
-			at,
+			at: {
+				hash: hash.toJSON(),
+				height: header.number.toNumber().toString(10),
+			},
 			validatorCount: validatorCount.toString(10),
 			activeEra: activeEraIndex.toString(10),
 			forceEra: forceEra.toString(),
-			// nextSession: nextSession.toString(),
-			// nextEra: nextEra.toString(),
+
+			// I'll take this comment out before merging
+			// if `??` is confusing checkout https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Nullish_coalescing_operator
 			unappliedSlashes:
 				unappliedSlashesAtActiveEraIndex.toString() ?? null,
 			queuedElected: queuedElected.unwrapOr(null)?.toString() ?? null,

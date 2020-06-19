@@ -209,6 +209,7 @@ async function main() {
 	});
 
 	// Get generalized staking information.
+	//
 	// at: {
 	// 	blockNumber,
 	// 	hash
