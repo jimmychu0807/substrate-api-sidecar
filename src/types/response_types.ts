@@ -21,7 +21,7 @@ interface StakingInfo {
 	validatorCount: string; // of validators in the set
 	activeEra: string | null; //ActiveEra.index
 	forceEra: string; // status of era forcing
-	nextEra?: string;
+	nextEra: string;
 	nextSession?: string;
 	unappliedSlashes: string | null;
 	queuedElected: string | null; // contains an array of stashes elected

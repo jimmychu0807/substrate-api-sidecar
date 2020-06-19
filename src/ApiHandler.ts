@@ -355,6 +355,9 @@ export default class ApiHandler {
 			forceEra,
 			queuedElectedOption,
 			eraElectionStatus,
+			currentSlot,
+			epochIndex,
+			genesisSlot,
 		] = await Promise.all([
 			await api.rpc.chain.getHeader(hash),
 			await api.query.staking.validatorCount.at(hash),
@@ -362,12 +365,15 @@ export default class ApiHandler {
 			await api.query.staking.forceEra.at(hash),
 			await api.query.staking.queuedElected.at(hash),
 			await api.query.staking.eraElectionStatus.at(hash),
+			await api.query.babe.currentSlot.at(hash),
+			await api.query.babe.epochIndex.at(hash),
+			await api.query.babe.genesisSlot.at(hash),
 		]);
 
 		// For below checks we need to decide if it makes sense to throw an error
 		// or just return null if they are none
-		const activeEraIndex = activeEraOption.unwrapOr(null)?.index;
-		if (activeEraIndex === null || activeEraIndex === undefined) {
+		const activeEra = activeEraOption.unwrapOr(null);
+		if (activeEra === null) {
 			throw {
 				statusCode: 404,
 				error: `ActiveEra.index at BlockHash: ${hash.toString()} could not be found.`,
@@ -376,8 +382,40 @@ export default class ApiHandler {
 
 		const unappliedSlashesAtActiveEraIndex = await api.query.staking.unappliedSlashes.at(
 			hash,
-			activeEraIndex
+			activeEra.index
 		);
+
+		const sessionsPerEra = api.consts.staking.sessionsPerEra;
+		const epochDuration = api.consts.babe.epochDuration;
+		const expectedBlockTime = api.consts.babe.expectedBlockTime;
+		console.log(sessionsPerEra);
+
+		// important to keep in mind that
+		// next_expected_epoch_change === estimate_next_session_rotation
+
+		// babe/src/lib 361
+		// nextSlot = currentEpochStart + epoch_duration - current_slot
+		// nextEpochChange ~= nextSlot - currentSlot
+
+		// frame/babe/src/lib 430
+		// current_epoch_start = epoch_index * epoch_duration + genesisSlot
+		const currentEpochStart = epochIndex
+			.mul(epochDuration)
+			.add(genesisSlot);
+
+		const currentEpochEnd = currentEpochStart.add(epochDuration);
+		const slotsRemainingInEpoch = currentEpochEnd.sub(currentSlot);
+		const timeRemainingInEpoch = slotsRemainingInEpoch.mul(
+			expectedBlockTime
+		);
+
+		let nextEra;
+		// If it is forceAlways, then we know every new epoch is also a new era
+		if (forceEra.isForceAlways) {
+			nextEra = expectedBlockTime
+				.mul(epochDuration)
+				.add(activeEra.start.unwrap()); // Add error catching here
+		}
 
 		return {
 			at: {
@@ -385,14 +423,18 @@ export default class ApiHandler {
 				height: header.number.toNumber().toString(10),
 			},
 			validatorCount: validatorCount.toString(10),
-			activeEra: activeEraIndex.toString(10),
+			// should the key here be activeEraIndex?
+			activeEra: activeEra.index.toString(10),
 			forceEra: forceEra.toString(),
+			nextEra: nextEra?.toString() ?? 'null', // TODO error handling for null?
+			nextSession: currentEpochEnd.toString(),
 			unappliedSlashes: unappliedSlashesAtActiveEraIndex.toString(),
 			queuedElected:
 				// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Nullish_coalescing_operator - TODO delete before merge
 				queuedElectedOption.unwrapOr(null)?.toString() ?? null,
 			electionStatus: {
 				status: eraElectionStatus.toString(),
+				// toggle: toggle?.toString(0),
 			},
 		};
 	}
