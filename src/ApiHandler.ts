@@ -33,26 +33,6 @@ interface SanitizedEvent {
 	data: EventData;
 }
 
-interface At {
-	hash: string;
-	height: string;
-}
-
-interface StakingInfo {
-	at: At;
-	validatorCount: string;
-	activeEra: string; //ActiveEra.index
-	forceEra: string;
-	nextEra: string;
-	nextSession: string;
-	unappliedSlashes: string[];
-	queuedElected: string[];
-	electionStatus: {
-		status: string;
-		toggle: string;
-	};
-}
-
 interface SanitizedCall {
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	[key: string]: any;
@@ -368,8 +348,56 @@ export default class ApiHandler {
 	async fetchStakingInfo(hash: BlockHash): Promise<StakingInfo> {
 		const api = await this.ensureMeta(hash);
 
+		const header = await api.rpc.chain.getHeader(hash);
+
+		const at = {
+			hash: hash.toJSON(),
+			height: header.number.toNumber().toString(10),
+		};
+		console.log(at);
+
+		const [
+			validatorCount,
+			activeEraOption,
+			forceEra,
+			queuedElected,
+			eraElectionStatus,
+		] = await Promise.all([
+			await api.query.staking.validatorCount.at(hash),
+			await api.query.staking.activeEra.at(hash),
+			await api.query.staking.forceEra.at(hash),
+			await api.query.staking.queuedElected.at(hash),
+			await api.query.staking.eraElectionStatus.at(hash),
+		]);
+
+		// await api.query.session.nextSessionRotation.at(hash), // in session, but not a storage item
+
+		const activeEraIndex = activeEraOption.unwrapOr(null)?.index;
+		if (activeEraIndex === null || activeEraIndex === undefined) {
+			throw {
+				statusCode: 404,
+				error: `There was an error while attempting to query for ActiveEra at BlockHash ${hash.toJSON()}`,
+			};
+		}
+
+		const unappliedSlashesAtActiveEraIndex = await api.query.staking.unappliedSlashes.at(
+			hash,
+			activeEraIndex
+		);
+
 		return {
 			at,
+			validatorCount: validatorCount.toString(10),
+			activeEra: activeEraIndex.toString(10),
+			forceEra: forceEra.toString(),
+			// nextSession: nextSession.toString(),
+			// nextEra: nextEra.toString(),
+			unappliedSlashes:
+				unappliedSlashesAtActiveEraIndex.toString() ?? null,
+			queuedElected: queuedElected.unwrapOr(null)?.toString() ?? null,
+			electionStatus: {
+				status: eraElectionStatus.toString(),
+			},
 		};
 	}
 

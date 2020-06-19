@@ -224,19 +224,17 @@ async function main() {
 	// 	status,
 	// 	toggle
 	// },
-	// get('/staking', async (params) => {
-	// 	const { address } = params;
-	// 	const hash = await api.rpc.chain.getFinalizedHead();
+	get('/staking', async (_) => {
+		const hash = await api.rpc.chain.getFinalizedHead();
 
-	// 	return await handler.fetchStakingInfo(hash, address);
-	// });
+		return await handler.fetchStakingInfo(hash);
+	});
 
-	// get('/staking/:number', async (params) => {
-	// 	const { address } = params;
-	// 	const hash: BlockHash = await getHashForBlock(api, params.number);
+	get('/staking/:number', async (params) => {
+		const hash: BlockHash = await getHashForBlock(api, params.number);
 
-	// 	return await handler.fetchStakingInfo(hash, address);
-	// });
+		return await handler.fetchStakingInfo(hash);
+	});
 
 	// GET staking information for an address.
 	//
