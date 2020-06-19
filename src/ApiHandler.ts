@@ -20,13 +20,14 @@ import { Struct } from '@polkadot/types';
 import { getSpecTypes } from '@polkadot/types-known';
 import { GenericCall } from '@polkadot/types/generic';
 import { EventData } from '@polkadot/types/generic/Event';
-import { DispatchInfo } from '@polkadot/types/interfaces';
+import { DispatchInfo, Header } from '@polkadot/types/interfaces';
 import { BlockHash } from '@polkadot/types/interfaces/chain';
 import { EventRecord } from '@polkadot/types/interfaces/system';
 import { u32 } from '@polkadot/types/primitive';
 import { Codec } from '@polkadot/types/types';
 import { u8aToHex } from '@polkadot/util';
 import { blake2AsU8a } from '@polkadot/util-crypto';
+import BN from 'bn.js';
 
 interface SanitizedEvent {
 	method: string;
@@ -345,6 +346,37 @@ export default class ApiHandler {
 		}
 	}
 
+	private async nextExpectedEpochChange(
+		api: ApiPromise,
+		header: Header
+	): Promise<BN> {
+		const { number, hash } = header;
+
+		const [currentSlot, epochIndex, genesisSlot] = await Promise.all([
+			await api.query.babe.currentSlot.at(hash),
+			await api.query.babe.epochIndex.at(hash),
+			await api.query.babe.genesisSlot.at(hash),
+		]);
+		// Time (measured in slots) that each epoch should last
+		const epochDuration = api.consts.babe.epochDuration;
+
+		// frame/babe/src/lib 430
+		// current_epoch_start = epoch_index * epoch_duration + genesisSlot
+		const currentEpochStart = epochIndex
+			.mul(epochDuration)
+			.add(genesisSlot);
+
+		// frame/babe/src/lib 361 - pseudo rust/TS below
+		// nextSlot = currentEpochStart + epoch_duration - current_slot
+		// next_expected_epoch_change = (nextSlot - currentSlot).intoBlockNumber() + currentBlock
+		const nextSlot = currentEpochStart.add(epochDuration);
+		const nextExpectedEpochChange = nextSlot
+			.sub(currentSlot)
+			.add(number.toBn());
+
+		return nextExpectedEpochChange;
+	}
+
 	async fetchStakingInfo(hash: BlockHash): Promise<StakingInfo> {
 		const api = await this.ensureMeta(hash);
 
@@ -355,9 +387,6 @@ export default class ApiHandler {
 			forceEra,
 			queuedElectedOption,
 			eraElectionStatus,
-			currentSlot,
-			epochIndex,
-			genesisSlot,
 		] = await Promise.all([
 			await api.rpc.chain.getHeader(hash),
 			await api.query.staking.validatorCount.at(hash),
@@ -365,9 +394,6 @@ export default class ApiHandler {
 			await api.query.staking.forceEra.at(hash),
 			await api.query.staking.queuedElected.at(hash),
 			await api.query.staking.eraElectionStatus.at(hash),
-			await api.query.babe.currentSlot.at(hash),
-			await api.query.babe.epochIndex.at(hash),
-			await api.query.babe.genesisSlot.at(hash),
 		]);
 
 		// For below checks we need to decide if it makes sense to throw an error
@@ -385,29 +411,9 @@ export default class ApiHandler {
 			activeEra.index
 		);
 
-		const sessionsPerEra = api.consts.staking.sessionsPerEra;
-		const epochDuration = api.consts.babe.epochDuration;
+		// const sessionsPerEra = api.consts.staking.sessionsPerEra;
 		const expectedBlockTime = api.consts.babe.expectedBlockTime;
-		console.log(sessionsPerEra);
-
-		// important to keep in mind that
-		// next_expected_epoch_change === estimate_next_session_rotation
-
-		// babe/src/lib 361
-		// nextSlot = currentEpochStart + epoch_duration - current_slot
-		// nextEpochChange ~= nextSlot - currentSlot
-
-		// frame/babe/src/lib 430
-		// current_epoch_start = epoch_index * epoch_duration + genesisSlot
-		const currentEpochStart = epochIndex
-			.mul(epochDuration)
-			.add(genesisSlot);
-
-		const currentEpochEnd = currentEpochStart.add(epochDuration);
-		const slotsRemainingInEpoch = currentEpochEnd.sub(currentSlot);
-		const timeRemainingInEpoch = slotsRemainingInEpoch.mul(
-			expectedBlockTime
-		);
+		const epochDuration = api.consts.babe.epochDuration;
 
 		let nextEra;
 		// If it is forceAlways, then we know every new epoch is also a new era
@@ -417,20 +423,24 @@ export default class ApiHandler {
 				.add(activeEra.start.unwrap()); // Add error catching here
 		}
 
+		// important to keep in mind that
+		// next_expected_epoch_change ~== estimate_next_session_rotation
+		const nextSession = (await this.nextExpectedEpochChange(api, header)) // verified this against the the app and was correct
+			.toString(10);
+
 		return {
 			at: {
 				hash: hash.toJSON(),
 				height: header.number.toNumber().toString(10),
 			},
 			validatorCount: validatorCount.toString(10),
-			// should the key here be activeEraIndex?
+			// TODO should the key here be activeEraIndex? - zeke
 			activeEra: activeEra.index.toString(10),
 			forceEra: forceEra.toString(),
-			nextEra: nextEra?.toString() ?? 'null', // TODO error handling for null?
-			nextSession: currentEpochEnd.toString(),
+			nextEra: nextEra?.toString() ?? 'null', // TODO error handling for null? - zeke
+			nextSession,
 			unappliedSlashes: unappliedSlashesAtActiveEraIndex.toString(),
 			queuedElected:
-				// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Nullish_coalescing_operator - TODO delete before merge
 				queuedElectedOption.unwrapOr(null)?.toString() ?? null,
 			electionStatus: {
 				status: eraElectionStatus.toString(),
