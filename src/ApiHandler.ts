@@ -348,13 +348,12 @@ export default class ApiHandler {
 	async fetchStakingInfo(hash: BlockHash): Promise<StakingInfo> {
 		const api = await this.ensureMeta(hash);
 
-
 		const [
 			header,
 			validatorCount,
 			activeEraOption,
 			forceEra,
-			queuedElected,
+			queuedElectedOption,
 			eraElectionStatus,
 		] = await Promise.all([
 			await api.rpc.chain.getHeader(hash),
@@ -365,11 +364,13 @@ export default class ApiHandler {
 			await api.query.staking.eraElectionStatus.at(hash),
 		]);
 
+		// For below checks we need to decide if it makes sense to throw an error
+		// or just return null if they are none
 		const activeEraIndex = activeEraOption.unwrapOr(null)?.index;
 		if (activeEraIndex === null || activeEraIndex === undefined) {
 			throw {
 				statusCode: 404,
-				error: `There was an error while attempting to query for ActiveEra.index at BlockHash ${hash.toString()}`,
+				error: `ActiveEra.index at BlockHash: ${hash.toString()} could not be found.`,
 			};
 		}
 
@@ -386,12 +387,10 @@ export default class ApiHandler {
 			validatorCount: validatorCount.toString(10),
 			activeEra: activeEraIndex.toString(10),
 			forceEra: forceEra.toString(),
-
-			// I'll take this comment out before merging
-			// if `??` is confusing checkout https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Nullish_coalescing_operator
-			unappliedSlashes:
-				unappliedSlashesAtActiveEraIndex.toString() ?? null,
-			queuedElected: queuedElected.unwrapOr(null)?.toString() ?? null,
+			unappliedSlashes: unappliedSlashesAtActiveEraIndex.toString(),
+			queuedElected:
+				// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Nullish_coalescing_operator - TODO delete before merge
+				queuedElectedOption.unwrapOr(null)?.toString() ?? null,
 			electionStatus: {
 				status: eraElectionStatus.toString(),
 			},
