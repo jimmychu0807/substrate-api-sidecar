@@ -33,6 +33,26 @@ interface SanitizedEvent {
 	data: EventData;
 }
 
+interface At {
+	hash: string;
+	height: string;
+}
+
+interface StakingInfo {
+	at: At;
+	validatorCount: string;
+	activeEra: string; //ActiveEra.index
+	forceEra: string;
+	nextEra: string;
+	nextSession: string;
+	unappliedSlashes: string[];
+	queuedElected: string[];
+	electionStatus: {
+		status: string;
+		toggle: string;
+	};
+}
+
 interface SanitizedCall {
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	[key: string]: any;
@@ -68,13 +88,13 @@ export default class ApiHandler {
 		]);
 
 		const { parentHash, number, stateRoot, extrinsicsRoot } = block.header;
-		const parentParentHash = await async function() {
+		const parentParentHash = await (async function () {
 			if (block.header.number.toNumber() > 1) {
 				return (await api.rpc.chain.getHeader(parentHash)).parentHash;
 			} else {
 				return parentHash;
 			}
-		}();
+		})();
 
 		const onInitialize = { events: [] as SanitizedEvent[] };
 		const onFinalize = { events: [] as SanitizedEvent[] };
@@ -345,13 +365,21 @@ export default class ApiHandler {
 		}
 	}
 
+	async fetchStakingInfo(hash: BlockHash): Promise<StakingInfo> {
+		const api = await this.ensureMeta(hash);
+
+		return {
+			at,
+		};
+	}
+
 	/**
 	 *
 	 * @param hash BlockHash to make call at.
 	 * @param stash _Stash_ address.
 	 */
 	// eslint-disable-next-line @typescript-eslint/explicit-module-boundary-types
-	async fetchStakingInfo(hash: BlockHash, stash: string) {
+	async fetchAddressStakingInfo(hash: BlockHash, stash: string) {
 		const api = await this.ensureMeta(hash);
 
 		const [header, controllerOption] = await Promise.all([
