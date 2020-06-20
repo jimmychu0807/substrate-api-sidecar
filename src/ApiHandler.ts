@@ -371,6 +371,7 @@ export default class ApiHandler {
 			.mul(epochDuration)
 			.add(genesisSlot);
 
+		// Check if we can query node for what it thinks the unix current time is?
 		// If we want time in terms of unix time I think we could use native JS and do:
 		// (JSNowUnixTime + (EndOfCurrentEpoch - CurrentSlot) * BlockDuration)
 		// imo this seems like a poor solution bc
@@ -387,50 +388,63 @@ export default class ApiHandler {
 		return nextExpectedEpochChange;
 	}
 
-	private nextEra(
+	private async nextEra(
 		api: ApiPromise,
-		// header: Header,
-		forceEra: Forcing,
-		activeEraInfo: ActiveEraInfo
-	): BN | null {
-		const activeEraStart = activeEraInfo.start.unwrapOr(null);
-		if (activeEraStart === null) {
-			throw {
-				statusCode: 404,
-				error: 'ActiveEra.start could not be found',
-			};
+		header: Header
+		// forceEra: Forcing,
+		// activeEraInfo: ActiveEraInfo
+	): Promise<BN | null> {
+		const sessionInfo = await api.derive.session?.progress();
+		if (!sessionInfo) {
+			return null; // Maybe throw
 		}
 
-		// EraDuration = EpochDuraton * api.consts.staking.sessionsPerEra
+		const { number } = header;
+		const { eraLength, eraProgress } = sessionInfo;
 
-		const expectedBlockTime = api.consts.babe.expectedBlockTime;
-		const epochDuration = api.consts.babe.epochDuration;
+		const remainingSlotsInEra = eraLength.sub(eraProgress);
+		return number.toBn().add(remainingSlotsInEra);
 
-		if (forceEra.isNotForcing) {
-			// Not forcing anything - just let whatever happen.
-		}
+		// const activeEraStart = activeEraInfo.start.unwrapOr(null);
+		// if (activeEraStart === null) {
+		// 	throw {
+		// 		statusCode: 404,
+		// 		error: 'ActiveEra.start could not be found',
+		// 	};
+		// }
 
-		if (forceEra.isForceNew) {
-			// Force a new era, then reset to `NotForcing` as soon as it is done.
-		}
+		// // EraDuration = EpochDuraton * api.consts.staking.sessionsPerEra
 
-		if (forceEra.isForceNone) {
-			// Force there to be no new eras indefinitely.
-			return null;
-		}
+		// const expectedBlockTime = api.consts.babe.expectedBlockTime;
+		// const epochDuration = api.consts.babe.epochDuration;
 
-		if (forceEra.isForceAlways) {
-			//TODO get rid of last if statement
-			// Force a new era at the end of all sessions indefinitely.
-			return expectedBlockTime.mul(epochDuration).add(activeEraStart);
-		}
+		// if (forceEra.isNotForcing) {
+		// 	// Not forcing anything - just let whatever happen.
+		// }
 
-		return new BN('TODO');
+		// if (forceEra.isForceNew) {
+		// 	// Force a new era, then reset to `NotForcing` as soon as it is done.
+		// }
+
+		// if (forceEra.isForceNone) {
+		// 	// Force there to be no new eras indefinitely.
+		// 	return null;
+		// }
+
+		// if (forceEra.isForceAlways) {
+		// 	//TODO get rid of last if statement
+		// 	// Force a new era at the end of all sessions indefinitely.
+		// 	return expectedBlockTime.mul(epochDuration).add(activeEraStart);
+		// }
+
+		// return new BN('TODO');
 	}
 
 	async fetchStakingInfo(hash: BlockHash): Promise<StakingInfo> {
 		const api = await this.ensureMeta(hash);
 
+		console.log(JSON.stringify(await api.derive.session?.progress()));
+		console.log(JSON.stringify(await api.derive.staking.overview()));
 		const [
 			header,
 			validatorCount,
@@ -462,22 +476,16 @@ export default class ApiHandler {
 			activeEra.index
 		);
 
-		// const sessionsPerEra = api.consts.staking.sessionsPerEra;
-		const expectedBlockTime = api.consts.babe.expectedBlockTime;
-		const epochDuration = api.consts.babe.epochDuration;
-
-		let nextEra;
-		// If it is forceAlways, then we know every new epoch is also a new era
-		if (forceEra.isForceAlways) {
-			nextEra = expectedBlockTime
-				.mul(epochDuration)
-				.add(activeEra.start.unwrap()); // TODO Add error catching here - zeke
-		}
+		// // const sessionsPerEra = api.consts.staking.sessionsPerEra;
+		// const expectedBlockTime = api.consts.babe.expectedBlockTime;
+		// const epochDuration = api.consts.babe.epochDuration;
 
 		// important to keep in mind that
 		// next_expected_epoch_change ~== estimate_next_session_rotation
 		const nextSession = (await this.nextExpectedEpochChange(api, header)) // verified this against the the app and was correct - zeke
 			.toString(10);
+
+		const nextEra = await this.nextEra(api, header);
 
 		return {
 			at: {
