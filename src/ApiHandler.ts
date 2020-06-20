@@ -20,7 +20,12 @@ import { Struct } from '@polkadot/types';
 import { getSpecTypes } from '@polkadot/types-known';
 import { GenericCall } from '@polkadot/types/generic';
 import { EventData } from '@polkadot/types/generic/Event';
-import { DispatchInfo, Header } from '@polkadot/types/interfaces';
+import {
+	ActiveEraInfo,
+	DispatchInfo,
+	Forcing,
+	Header,
+} from '@polkadot/types/interfaces';
 import { BlockHash } from '@polkadot/types/interfaces/chain';
 import { EventRecord } from '@polkadot/types/interfaces/system';
 import { u32 } from '@polkadot/types/primitive';
@@ -366,6 +371,11 @@ export default class ApiHandler {
 			.mul(epochDuration)
 			.add(genesisSlot);
 
+		// If we want time in terms of unix time I think we could use native JS and do:
+		// (JSNowUnixTime + (EndOfCurrentEpoch - CurrentSlot) * BlockDuration)
+		// imo this seems like a poor solution bc
+		// it would heavily rely on the internal clock of the machine sidecar is on
+
 		// frame/babe/src/lib 361 - pseudo rust/TS below
 		// nextSlot = currentEpochStart + epoch_duration - current_slot
 		// next_expected_epoch_change = (nextSlot - currentSlot).intoBlockNumber() + currentBlock
@@ -375,6 +385,47 @@ export default class ApiHandler {
 			.add(number.toBn());
 
 		return nextExpectedEpochChange;
+	}
+
+	private nextEra(
+		api: ApiPromise,
+		// header: Header,
+		forceEra: Forcing,
+		activeEraInfo: ActiveEraInfo
+	): BN | null {
+		const activeEraStart = activeEraInfo.start.unwrapOr(null);
+		if (activeEraStart === null) {
+			throw {
+				statusCode: 404,
+				error: 'ActiveEra.start could not be found',
+			};
+		}
+
+		// EraDuration = EpochDuraton * api.consts.staking.sessionsPerEra
+
+		const expectedBlockTime = api.consts.babe.expectedBlockTime;
+		const epochDuration = api.consts.babe.epochDuration;
+
+		if (forceEra.isNotForcing) {
+			// Not forcing anything - just let whatever happen.
+		}
+
+		if (forceEra.isForceNew) {
+			// Force a new era, then reset to `NotForcing` as soon as it is done.
+		}
+
+		if (forceEra.isForceNone) {
+			// Force there to be no new eras indefinitely.
+			return null;
+		}
+
+		if (forceEra.isForceAlways) {
+			//TODO get rid of last if statement
+			// Force a new era at the end of all sessions indefinitely.
+			return expectedBlockTime.mul(epochDuration).add(activeEraStart);
+		}
+
+		return new BN('TODO');
 	}
 
 	async fetchStakingInfo(hash: BlockHash): Promise<StakingInfo> {
@@ -420,12 +471,12 @@ export default class ApiHandler {
 		if (forceEra.isForceAlways) {
 			nextEra = expectedBlockTime
 				.mul(epochDuration)
-				.add(activeEra.start.unwrap()); // Add error catching here
+				.add(activeEra.start.unwrap()); // TODO Add error catching here - zeke
 		}
 
 		// important to keep in mind that
 		// next_expected_epoch_change ~== estimate_next_session_rotation
-		const nextSession = (await this.nextExpectedEpochChange(api, header)) // verified this against the the app and was correct
+		const nextSession = (await this.nextExpectedEpochChange(api, header)) // verified this against the the app and was correct - zeke
 			.toString(10);
 
 		return {
@@ -437,14 +488,14 @@ export default class ApiHandler {
 			// TODO should the key here be activeEraIndex? - zeke
 			activeEra: activeEra.index.toString(10),
 			forceEra: forceEra.toString(),
-			nextEra: nextEra?.toString() ?? 'null', // TODO error handling for null? - zeke
+			nextEra: nextEra?.toString() ?? null, // TODO error handling for null? - zeke
 			nextSession,
 			unappliedSlashes: unappliedSlashesAtActiveEraIndex.toString(),
 			queuedElected:
 				queuedElectedOption.unwrapOr(null)?.toString() ?? null,
 			electionStatus: {
 				status: eraElectionStatus.toString(),
-				// toggle: toggle?.toString(0),
+				toggle: 'place holder value',
 			},
 		};
 	}
