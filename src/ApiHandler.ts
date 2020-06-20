@@ -354,14 +354,27 @@ export default class ApiHandler {
 			forceEra,
 			queuedElectedOption,
 			eraElectionStatus,
+			validators,
 		] = await Promise.all([
 			await api.rpc.chain.getHeader(hash),
 			await api.query.staking.validatorCount.at(hash),
 			await api.query.staking.forceEra.at(hash),
 			await api.query.staking.queuedElected.at(hash),
 			await api.query.staking.eraElectionStatus.at(hash),
+			await api.query.session.validators.at(hash),
 		]);
 		const { number } = header;
+
+		// const { electionLookAhead } = api.consts.staking; // will use for calculating toggle
+
+		// If we end up adding next validator set this could be useful
+		// const { validators } = await api.derive.staking?.validators();
+		// if (!validators) {
+		// 	throw {
+		// 		statusCode: 404,
+		// 		error: `validatorSet at BlockHash: ${hash.toString()} could not be found.`,
+		// 	};
+		// }
 
 		const sessionInfo = await api.derive.session?.progress();
 		if (!sessionInfo) {
@@ -383,6 +396,7 @@ export default class ApiHandler {
 			.toString(10);
 
 		// Should nextEra code block be moved to its own function?
+		// Could combine with nextSession
 		const eraLength = forceEra.isForceAlways
 			? sessionLength
 			: sessionInfo.eraLength;
@@ -392,7 +406,7 @@ export default class ApiHandler {
 		const nextEra = forceEra.isForceNone
 			? null
 			: eraLength.sub(eraProgress).add(number.toBn()).toString(10);
-
+		console.log(validators.length);
 		return {
 			at: {
 				hash: hash.toJSON(),
@@ -411,6 +425,7 @@ export default class ApiHandler {
 				status: eraElectionStatus.toString(),
 				toggle: 'place holder value',
 			},
+			validatorSet: validators.map((v) => v.toString()),
 		};
 	}
 

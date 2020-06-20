@@ -29,4 +29,5 @@ interface StakingInfo {
 		status: string;
 		toggle: string;
 	};
+	validatorSet: string | string[];
 }
